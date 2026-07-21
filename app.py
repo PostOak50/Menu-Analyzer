@@ -1,9 +1,13 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from fpdf import FPDF
 from datetime import datetime
-import os
+import io
+
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 st.set_page_config(page_title="Menu Popularity & Revenue Share Engine", layout="wide")
 
@@ -188,121 +192,134 @@ if uploaded_files:
         st.subheader("📄 Generate & Export Executive PDF Report")
         st.write("Click below to compile this menu analysis into a styled PDF report ready for email attachment.")
 
-        class PDFReport(FPDF):
-            def header(self):
-                self.set_font('Helvetica', 'B', 16)
-                self.set_text_color(26, 54, 93)
-                self.cell(0, 10, 'Menu Performance Executive Summary', 0, 1, 'L')
-                self.set_font('Helvetica', '', 10)
-                self.set_text_color(113, 128, 150)
-                self.cell(0, 5, f'Generated on {datetime.now().strftime("%B %d, %Y")} | Filter: {time_view}', 0, 1, 'L')
-                self.ln(5)
-
-            def footer(self):
-                self.set_y(-15)
-                self.set_font('Helvetica', 'I', 8)
-                self.set_text_color(128, 128, 128)
-                self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
-
         if st.button("Generate PDF Executive Report"):
-            pdf = PDFReport()
-            pdf.add_page()
-            pdf.set_auto_page_break(auto=True, margin=15)
+            buffer = io.BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+            story = []
 
-            # KPIs Summary Table
-            pdf.set_font('Helvetica', 'B', 10)
-            pdf.set_fill_color(237, 242, 247)
-            pdf.set_text_color(45, 55, 72)
+            styles = getSampleStyleSheet()
+            title_style = ParagraphStyle(
+                'ReportTitle',
+                parent=styles['Heading1'],
+                fontSize=18,
+                textColor=colors.HexColor("#1A365D"),
+                spaceAfter=4
+            )
+            sub_style = ParagraphStyle(
+                'ReportSub',
+                parent=styles['Normal'],
+                fontSize=10,
+                textColor=colors.HexColor("#718096"),
+                spaceAfter=12
+            )
+            h2_style = ParagraphStyle(
+                'H2Style',
+                parent=styles['Heading2'],
+                fontSize=12,
+                textColor=colors.HexColor("#2C5282"),
+                spaceBefore=10,
+                spaceAfter=6
+            )
+
+            # Title
+            story.append(Paragraph("Menu Performance Executive Summary", title_style))
+            story.append(Paragraph(f"Generated on {datetime.now().strftime('%B %d, %Y')} | Filter: {time_view}", sub_style))
+
+            # KPI Table
+            kpi_data = [
+                ["Total Units Sold", "Total Revenue", "Valid Dishes", "Double Top Performers"],
+                [f"{total_units_overall:,.0f}", f"${total_rev_overall:,.2f}", f"{len(df_grouped)}", f"{len(double_top_names)}"]
+            ]
+            kpi_table = Table(kpi_data, colWidths=[130, 130, 130, 150])
+            kpi_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#EDF2F7")),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.HexColor("#2D3748")),
+                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,-1), 9),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E0")),
+                ('BACKGROUND', (0,1), (-1,1), colors.white),
+            ]))
+            story.append(kpi_table)
+            story.append(Spacer(1, 10))
+
+            # Note Box
+            note_data = [["🟢 Green Highlight: Items qualifying as BOTH Top 25% Volume AND Top 25% Revenue."]]
+            note_table = Table(note_data, colWidths=[540])
+            note_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#D4EDDA")),
+                ('TEXTCOLOR', (0,0), (-1,-1), colors.HexColor("#155724")),
+                ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,-1), 8),
+                ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor("#C3E6CB")),
+                ('PADDING', (0,0), (-1,-1), 6),
+            ]))
+            story.append(note_table)
+            story.append(Spacer(1, 10))
+
+            # Top 25% Section
+            story.append(Paragraph("Top 25% Performers", h2_style))
+            top_table_data = [["Item Name", "Units Sold", "% Volume", "Revenue ($)", "% Revenue"]]
             
-            pdf.cell(47, 8, "Total Units", 1, 0, 'C', fill=True)
-            pdf.cell(47, 8, "Total Revenue", 1, 0, 'C', fill=True)
-            pdf.cell(47, 8, "Valid Dishes", 1, 0, 'C', fill=True)
-            pdf.cell(47, 8, "Double Top (Top 25%)", 1, 1, 'C', fill=True)
+            top_row_styles = [
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#E2E8F0")),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.black),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,-1), 8),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
+                ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
+            ]
 
-            pdf.set_font('Helvetica', '', 10)
-            pdf.cell(47, 8, f"{total_units_overall:,.0f}", 1, 0, 'C')
-            pdf.cell(47, 8, f"${total_rev_overall:,.2f}", 1, 0, 'C')
-            pdf.cell(47, 8, f"{len(df_grouped)}", 1, 0, 'C')
-            pdf.cell(47, 8, f"{len(double_top_names)}", 1, 1, 'C')
-            pdf.ln(8)
-
-            # Legend Note
-            pdf.set_fill_color(212, 237, 218)
-            pdf.set_text_color(21, 87, 36)
-            pdf.set_font('Helvetica', 'B', 9)
-            pdf.cell(0, 8, " Note: Green rows represent Double Performers (Top 25% Volume AND Revenue)", 1, 1, fill=True)
-            pdf.ln(5)
-
-            # Section: Top 25%
-            pdf.set_text_color(44, 82, 130)
-            pdf.set_font('Helvetica', 'B', 12)
-            pdf.cell(0, 8, "Top 25% Performers", 0, 1)
-            
-            # Header
-            pdf.set_font('Helvetica', 'B', 9)
-            pdf.set_fill_color(226, 232, 240)
-            pdf.set_text_color(0, 0, 0)
-            pdf.cell(65, 7, "Item Name", 1, 0, fill=True)
-            pdf.cell(30, 7, "Units Sold", 1, 0, 'R', fill=True)
-            pdf.cell(30, 7, "% Volume", 1, 0, 'R', fill=True)
-            pdf.cell(35, 7, "Revenue ($)", 1, 0, 'R', fill=True)
-            pdf.cell(28, 7, "% Revenue", 1, 1, 'R', fill=True)
-
-            pdf.set_font('Helvetica', '', 8)
-            for _, r in top_25_freq.iterrows():
+            for idx, (_, r) in enumerate(top_25_freq.iterrows(), start=1):
                 is_dbl = r['item_name'] in double_top_names
+                label = f"{r['item_name']} (Top Vol/Rev)" if is_dbl else r['item_name']
+                top_table_data.append([
+                    label[:32],
+                    f"{r['qty_sold']:,.0f}",
+                    f"{r['pct_frequency']:.2f}%",
+                    f"${r['total_revenue']:,.2f}",
+                    f"{r['pct_revenue']:.2f}%"
+                ])
                 if is_dbl:
-                    pdf.set_fill_color(212, 237, 218)
-                    pdf.set_text_color(21, 87, 36)
-                else:
-                    pdf.set_fill_color(255, 255, 255)
-                    pdf.set_text_color(0, 0, 0)
+                    top_row_styles.append(('BACKGROUND', (0, idx), (-1, idx), colors.HexColor("#D4EDDA")))
+                    top_row_styles.append(('TEXTCOLOR', (0, idx), (-1, idx), colors.HexColor("#155724")))
 
-                item_label = f"{r['item_name']} (Top Vol/Rev)" if is_dbl else r['item_name']
-                # Clean text encoding for FPDF
-                clean_name = str(item_label).encode('latin-1', 'replace').decode('latin-1')[:32]
-                
-                pdf.cell(65, 6, clean_name, 1, 0, fill=is_dbl)
-                pdf.cell(30, 6, f"{r['qty_sold']:,.0f}", 1, 0, 'R', fill=is_dbl)
-                pdf.cell(30, 6, f"{r['pct_frequency']:.2f}%", 1, 0, 'R', fill=is_dbl)
-                pdf.cell(35, 6, f"${r['total_revenue']:,.2f}", 1, 0, 'R', fill=is_dbl)
-                pdf.cell(28, 6, f"{r['pct_revenue']:.2f}%", 1, 1, 'R', fill=is_dbl)
+            top_table = Table(top_table_data, colWidths=[200, 85, 85, 85, 85])
+            top_table.setStyle(TableStyle(top_row_styles))
+            story.append(top_table)
+            story.append(Spacer(1, 12))
 
-            pdf.ln(5)
-
-            # Section: Bottom Performers
-            pdf.set_text_color(155, 44, 44)
-            pdf.set_font('Helvetica', 'B', 12)
-            pdf.cell(0, 8, "Bottom Performers (Bottom 25% or < 50 units/month)", 0, 1)
-
-            pdf.set_font('Helvetica', 'B', 9)
-            pdf.set_fill_color(226, 232, 240)
-            pdf.set_text_color(0, 0, 0)
-            pdf.cell(65, 7, "Item Name", 1, 0, fill=True)
-            pdf.cell(30, 7, "Units Sold", 1, 0, 'R', fill=True)
-            pdf.cell(30, 7, "Mo. Avg", 1, 0, 'R', fill=True)
-            pdf.cell(35, 7, "Revenue ($)", 1, 0, 'R', fill=True)
-            pdf.cell(28, 7, "% Revenue", 1, 1, 'R', fill=True)
-
-            pdf.set_font('Helvetica', '', 8)
-            for _, r in bot_25_freq.iterrows():
-                clean_name = str(r['item_name']).encode('latin-1', 'replace').decode('latin-1')[:32]
-                pdf.cell(65, 6, clean_name, 1, 0)
-                pdf.cell(30, 6, f"{r['qty_sold']:,.0f}", 1, 0, 'R')
-                pdf.cell(30, 6, f"{r['avg_monthly_qty']:.1f}", 1, 0, 'R')
-                pdf.cell(35, 6, f"${r['total_revenue']:,.2f}", 1, 0, 'R')
-                pdf.cell(28, 6, f"{r['pct_revenue']:.2f}%", 1, 1, 'R')
-
-            # Write file to local cloud buffer and read as bytes
-            pdf_filename = "temp_menu_report.pdf"
-            pdf.output(pdf_filename)
+            # Bottom 25% Section
+            story.append(Paragraph("Bottom Performers (Bottom 25% or < 50 units/month)", h2_style))
+            bot_table_data = [["Item Name", "Units Sold", "Monthly Avg", "Revenue ($)", "% Revenue"]]
             
-            with open(pdf_filename, "rb") as f:
-                pdf_bytes = f.read()
+            for _, r in bot_25_freq.iterrows():
+                bot_table_data.append([
+                    r['item_name'][:32],
+                    f"{r['qty_sold']:,.0f}",
+                    f"{r['avg_monthly_qty']:.1f}",
+                    f"${r['total_revenue']:,.2f}",
+                    f"{r['pct_revenue']:.2f}%"
+                ])
+
+            bot_table = Table(bot_table_data, colWidths=[200, 85, 85, 85, 85])
+            bot_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#E2E8F0")),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.black),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,-1), 8),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
+                ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
+            ]))
+            story.append(bot_table)
+
+            doc.build(story)
+            pdf_data = buffer.getvalue()
+            buffer.close()
 
             st.download_button(
                 label="📥 Download PDF Executive Report",
-                data=pdf_bytes,
+                data=pdf_data,
                 file_name=f"Menu_Report_{datetime.now().strftime('%Y_%m_%d')}.pdf",
                 mime="application/pdf"
             )
