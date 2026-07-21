@@ -5,11 +5,11 @@ from datetime import datetime
 import io
 
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-st.set_page_config(page_title="Menu Popularity & Revenue Share Engine", layout="wide")
+st.set_page_config(page_title="Menu Volume & Revenue Engine", layout="wide")
 
 st.title("Restaurant Menu Volume & Revenue Share Engine")
 st.markdown("Analyze dish popularity by **Monthly** and **Quarterly** breakdown, highlighting Top 25% and Bottom 25% performers, items sold under 50 units/month, and PDF exports.")
@@ -28,7 +28,7 @@ if uploaded_files:
     raw_df = pd.concat(df_list, ignore_index=True)
     raw_df.columns = raw_df.columns.str.strip().str.lower()
     
-    # Required columns
+    # Required columns verification
     required_cols = {'date', 'item_name', 'qty_sold', 'selling_price'}
     if not required_cols.issubset(set(raw_df.columns)):
         st.error(f"CSV files must contain the following columns: {required_cols}")
@@ -96,12 +96,12 @@ if uploaded_files:
     top_rev_cutoff = df_grouped['total_revenue'].quantile(0.75)
     bot_rev_cutoff = df_grouped['total_revenue'].quantile(0.25)
 
-    # Double Performers
+    # Identify Double Performers
     top_25_freq_names = set(df_grouped[df_grouped['qty_sold'] >= top_freq_cutoff]['item_name'])
     top_25_rev_names = set(df_grouped[df_grouped['total_revenue'] >= top_rev_cutoff]['item_name'])
     double_top_names = top_25_freq_names.intersection(top_25_rev_names)
 
-    # Dataframe Subsets
+    # Subsets
     top_25_freq = df_grouped[df_grouped['qty_sold'] >= top_freq_cutoff].sort_values(by='qty_sold', ascending=False)
     top_25_rev = df_grouped[df_grouped['total_revenue'] >= top_rev_cutoff].sort_values(by='total_revenue', ascending=False)
 
@@ -132,7 +132,6 @@ if uploaded_files:
 
         with col_freq:
             st.markdown("### 📊 BY ORDER FREQUENCY (UNITS)")
-            
             st.success("🔥 **Top 25% Most Popular Items**")
             top_freq_disp = top_25_freq[['item_name', 'qty_sold', 'pct_frequency']].rename(
                 columns={'item_name': 'Item', 'qty_sold': 'Units Sold', 'pct_frequency': '% Volume'}
@@ -153,7 +152,6 @@ if uploaded_files:
 
         with col_rev:
             st.markdown("### 💰 BY REVENUE SHARE ($)")
-
             st.success("💵 **Top 25% Highest Revenue Drivers**")
             top_rev_disp = top_25_rev[['item_name', 'total_revenue', 'pct_revenue']].rename(
                 columns={'item_name': 'Item', 'total_revenue': 'Total Revenue ($)', 'pct_revenue': '% Revenue'}
@@ -177,102 +175,91 @@ if uploaded_files:
         group_dim = 'quarter' if time_view == "By Quarter" else 'month' if time_view == "By Month" else 'quarter'
         
         st.markdown(f"#### Units Sold by Item per {group_dim.title()}")
-        pivot_units = raw_df.pivot_table(
-            index='item_name', columns=group_dim, values='qty_sold', aggfunc='sum', fill_value=0
-        )
+        pivot_units = raw_df.pivot_table(index='item_name', columns=group_dim, values='qty_sold', aggfunc='sum', fill_value=0)
         st.dataframe(pivot_units, use_container_width=True)
 
         st.markdown(f"#### Total Revenue ($) by Item per {group_dim.title()}")
-        pivot_rev = raw_df.pivot_table(
-            index='item_name', columns=group_dim, values='total_revenue', aggfunc='sum', fill_value=0
-        )
+        pivot_rev = raw_df.pivot_table(index='item_name', columns=group_dim, values='total_revenue', aggfunc='sum', fill_value=0)
         st.dataframe(pivot_rev.style.format("${:,.2f}"), use_container_width=True)
 
     with tab3:
-        st.subheader("📄 Generate & Export Executive PDF Report")
-        st.write("Click below to compile this menu analysis into a styled PDF report ready for email attachment.")
+        st.subheader("📄 Export Executive PDF Report")
+        st.write("Generate a formatted PDF report fitted dynamically for client presentations.")
 
-        if st.button("Generate PDF Executive Report"):
+        if st.button("Generate Executive PDF"):
             buffer = io.BytesIO()
-            doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+            doc = SimpleDocTemplate(
+                buffer, 
+                pagesize=letter, 
+                rightMargin=36, 
+                leftMargin=36, 
+                topMargin=36, 
+                bottomMargin=36
+            )
             story = []
 
             styles = getSampleStyleSheet()
             title_style = ParagraphStyle(
-                'ReportTitle',
-                parent=styles['Heading1'],
-                fontSize=18,
-                textColor=colors.HexColor("#1A365D"),
-                spaceAfter=4
+                'ReportTitle', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor("#1A365D"), spaceAfter=2
             )
             sub_style = ParagraphStyle(
-                'ReportSub',
-                parent=styles['Normal'],
-                fontSize=10,
-                textColor=colors.HexColor("#718096"),
-                spaceAfter=12
+                'ReportSub', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor("#718096"), spaceAfter=10
             )
             h2_style = ParagraphStyle(
-                'H2Style',
-                parent=styles['Heading2'],
-                fontSize=12,
-                textColor=colors.HexColor("#2C5282"),
-                spaceBefore=10,
-                spaceAfter=6
+                'H2Style', parent=styles['Heading2'], fontSize=11, textColor=colors.HexColor("#2C5282"), spaceBefore=6, spaceAfter=4
             )
 
-            # Title
+            # Header
             story.append(Paragraph("Menu Performance Executive Summary", title_style))
-            story.append(Paragraph(f"Generated on {datetime.now().strftime('%B %d, %Y')} | Filter: {time_view}", sub_style))
+            story.append(Paragraph(f"Generated on {datetime.now().strftime('%B %d, %Y')} | Filter Mode: {time_view}", sub_style))
 
-            # KPI Table
+            # Executive KPI Table
             kpi_data = [
                 ["Total Units Sold", "Total Revenue", "Valid Dishes", "Double Top Performers"],
                 [f"{total_units_overall:,.0f}", f"${total_rev_overall:,.2f}", f"{len(df_grouped)}", f"{len(double_top_names)}"]
             ]
-            kpi_table = Table(kpi_data, colWidths=[130, 130, 130, 150])
+            kpi_table = Table(kpi_data, colWidths=[135, 135, 135, 135])
             kpi_table.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#EDF2F7")),
                 ('TEXTCOLOR', (0,0), (-1,0), colors.HexColor("#2D3748")),
                 ('ALIGN', (0,0), (-1,-1), 'CENTER'),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,-1), 9),
+                ('FONTSIZE', (0,0), (-1,0), 8),
+                ('FONTSIZE', (0,1), (-1,1), 10),
                 ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E0")),
                 ('BACKGROUND', (0,1), (-1,1), colors.white),
+                ('PADDING', (0,0), (-1,-1), 5),
             ]))
             story.append(kpi_table)
-            story.append(Spacer(1, 10))
+            story.append(Spacer(1, 8))
 
-            # Note Box
-            note_data = [["🟢 Green Highlight: Items qualifying as BOTH Top 25% Volume AND Top 25% Revenue."]]
-            note_table = Table(note_data, colWidths=[540])
-            note_table.setStyle(TableStyle([
-                ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#D4EDDA")),
-                ('TEXTCOLOR', (0,0), (-1,-1), colors.HexColor("#155724")),
-                ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,-1), 8),
-                ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor("#C3E6CB")),
-                ('PADDING', (0,0), (-1,-1), 6),
-            ]))
-            story.append(note_table)
-            story.append(Spacer(1, 10))
+            # Helper for Font Auto-Scaling
+            def get_font_size(row_count):
+                if row_count > 30:
+                    return 6, 4
+                elif row_count > 20:
+                    return 7, 5
+                else:
+                    return 8, 6
 
-            # Top 25% Section
-            story.append(Paragraph("Top 25% Performers", h2_style))
-            top_table_data = [["Item Name", "Units Sold", "% Volume", "Revenue ($)", "% Revenue"]]
-            
-            top_row_styles = [
-                ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#E2E8F0")),
-                ('TEXTCOLOR', (0,0), (-1,0), colors.black),
+            # TOP 25% TABLE SECTION
+            top_row_count = len(top_25_freq)
+            f_size, p_size = get_font_size(top_row_count)
+
+            top_table_data = [["Item Name", "Units Sold", "% Volume", "Revenue ($)", "% Revenue Share"]]
+            top_styles = [
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2C5282")),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.white),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,-1), 8),
+                ('FONTSIZE', (0,0), (-1,-1), f_size),
+                ('PADDING', (0,0), (-1,-1), p_size),
                 ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
                 ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
             ]
 
             for idx, (_, r) in enumerate(top_25_freq.iterrows(), start=1):
                 is_dbl = r['item_name'] in double_top_names
-                label = f"{r['item_name']} (Top Vol/Rev)" if is_dbl else r['item_name']
+                label = f"{r['item_name']} (Top Vol & Rev)" if is_dbl else r['item_name']
                 top_table_data.append([
                     label[:32],
                     f"{r['qty_sold']:,.0f}",
@@ -281,46 +268,58 @@ if uploaded_files:
                     f"{r['pct_revenue']:.2f}%"
                 ])
                 if is_dbl:
-                    top_row_styles.append(('BACKGROUND', (0, idx), (-1, idx), colors.HexColor("#D4EDDA")))
-                    top_row_styles.append(('TEXTCOLOR', (0, idx), (-1, idx), colors.HexColor("#155724")))
+                    top_styles.append(('BACKGROUND', (0, idx), (-1, idx), colors.HexColor("#D4EDDA")))
+                    top_styles.append(('TEXTCOLOR', (0, idx), (-1, idx), colors.HexColor("#155724")))
 
             top_table = Table(top_table_data, colWidths=[200, 85, 85, 85, 85])
-            top_table.setStyle(TableStyle(top_row_styles))
-            story.append(top_table)
-            story.append(Spacer(1, 12))
-
-            # Bottom 25% Section
-            story.append(Paragraph("Bottom Performers (Bottom 25% or < 50 units/month)", h2_style))
-            bot_table_data = [["Item Name", "Units Sold", "Monthly Avg", "Revenue ($)", "% Revenue"]]
+            top_table.setStyle(TableStyle(top_styles))
             
-            for _, r in bot_25_freq.iterrows():
-                bot_table_data.append([
-                    r['item_name'][:32],
-                    f"{r['qty_sold']:,.0f}",
-                    f"{r['avg_monthly_qty']:.1f}",
-                    f"${r['total_revenue']:,.2f}",
-                    f"{r['pct_revenue']:.2f}%"
-                ])
+            top_block = [
+                Paragraph("Top 25% Performers (🔥 High Volume / Revenue)", h2_style),
+                top_table
+            ]
+            story.append(KeepTogether(top_block))
+            story.append(Spacer(1, 10))
+
+            # BOTTOM 25% TABLE SECTION
+            bot_row_count = len(bot_25_freq)
+            f_size_b, p_size_b = get_font_size(bot_row_count)
+
+            bot_table_data = [["Item Name", "Units Sold", "Monthly Avg", "Revenue ($)", "% Revenue Share"]]
+            bot_table_data.extend([
+                r['item_name'][:32],
+                f"{r['qty_sold']:,.0f}",
+                f"{r['avg_monthly_qty']:.1f}",
+                f"${r['total_revenue']:,.2f}",
+                f"{r['pct_revenue']:.2f}%"
+            ] for _, r in bot_25_freq.iterrows())
 
             bot_table = Table(bot_table_data, colWidths=[200, 85, 85, 85, 85])
             bot_table.setStyle(TableStyle([
-                ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#E2E8F0")),
-                ('TEXTCOLOR', (0,0), (-1,0), colors.black),
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#9B2C2C")),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.white),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,-1), 8),
+                ('FONTSIZE', (0,0), (-1,-1), f_size_b),
+                ('PADDING', (0,0), (-1,-1), p_size_b),
                 ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
                 ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
             ]))
-            story.append(bot_table)
 
+            bot_block = [
+                Paragraph("Bottom Performers (📉 Bottom 25% or < 50 units/month)", h2_style),
+                bot_table
+            ]
+            story.append(KeepTogether(bot_block))
+
+            # Build Document
             doc.build(story)
-            pdf_data = buffer.getvalue()
+            pdf_bytes = buffer.getvalue()
             buffer.close()
 
             st.download_button(
-                label="📥 Download PDF Executive Report",
-                data=pdf_data,
-                file_name=f"Menu_Report_{datetime.now().strftime('%Y_%m_%d')}.pdf",
+                label="📥 Download Executive PDF Report",
+                data=pdf_bytes,
+                file_name=f"Menu_Executive_Report_{datetime.now().strftime('%Y_%m_%d')}.pdf",
                 mime="application/pdf"
             )
 
