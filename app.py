@@ -12,27 +12,39 @@ from reportlab.lib import colors
 st.set_page_config(page_title="Menu Volume & Revenue Engine", layout="wide")
 
 st.title("Restaurant Menu Volume & Revenue Share Engine")
-st.markdown("Analyze dish popularity by **Monthly** and **Quarterly** breakdown, highlighting Top 25% and Bottom 25% performers, items sold under 50 units/month, and PDF exports.")
+st.markdown("Upload multiple POS CSV files to consolidate dish popularity across months, quarters, or locations.")
 
-# Sidebar File Upload
+# Sidebar Multi-File Upload Handler
 uploaded_files = st.sidebar.file_uploader(
     "Upload POS CSV Files", type=["csv"], accept_multiple_files=True
 )
 
 if uploaded_files:
     df_list = []
+    
+    # Process each uploaded spreadsheet
     for file in uploaded_files:
-        df_temp = pd.read_csv(file)
-        df_list.append(df_temp)
-    
-    raw_df = pd.concat(df_list, ignore_index=True)
-    raw_df.columns = raw_df.columns.str.strip().str.lower()
-    
-    # Required columns verification
-    required_cols = {'date', 'item_name', 'qty_sold', 'selling_price'}
-    if not required_cols.issubset(set(raw_df.columns)):
-        st.error(f"CSV files must contain the following columns: {required_cols}")
+        try:
+            df_temp = pd.read_csv(file)
+            # Standardize column headers (remove spaces, convert to lowercase)
+            df_temp.columns = df_temp.columns.str.strip().str.lower()
+            
+            # Verify required columns exist in every spreadsheet
+            required_cols = {'date', 'item_name', 'qty_sold', 'selling_price'}
+            if required_cols.issubset(set(df_temp.columns)):
+                df_list.append(df_temp)
+            else:
+                st.sidebar.error(f"Skipped {file.name}: Missing required columns {required_cols - set(df_temp.columns)}")
+        except Exception as e:
+            st.sidebar.error(f"Error reading {file.name}: {e}")
+
+    if not df_list:
+        st.error("No valid CSV files were loaded. Please check your column headers.")
         st.stop()
+
+    # Consolidate all spreadsheets into a single unified DataFrame
+    raw_df = pd.concat(df_list, ignore_index=True)
+    st.sidebar.success(f"Successfully merged {len(df_list)} spreadsheet(s)!")
 
     # Data Cleaning: Ignore items without a valid price
     raw_df['selling_price'] = pd.to_numeric(raw_df['selling_price'], errors='coerce')
@@ -74,7 +86,7 @@ if uploaded_files:
 
     num_months = max(1, filtered_df['month'].nunique())
 
-    # Aggregations
+    # Consolidated Aggregations (Sums total quantities and revenues across all files)
     df_grouped = filtered_df.groupby('item_name').agg({
         'qty_sold': 'sum',
         'total_revenue': 'sum',
@@ -96,7 +108,7 @@ if uploaded_files:
     top_rev_cutoff = df_grouped['total_revenue'].quantile(0.75)
     bot_rev_cutoff = df_grouped['total_revenue'].quantile(0.25)
 
-    # Identify Double Performers
+    # Double Performers (Top 25% Volume AND Top 25% Revenue)
     top_25_freq_names = set(df_grouped[df_grouped['qty_sold'] >= top_freq_cutoff]['item_name'])
     top_25_rev_names = set(df_grouped[df_grouped['total_revenue'] >= top_rev_cutoff]['item_name'])
     double_top_names = top_25_freq_names.intersection(top_25_rev_names)
@@ -108,7 +120,7 @@ if uploaded_files:
     bot_25_freq = df_grouped[(df_grouped['qty_sold'] <= bot_freq_cutoff) | (df_grouped['avg_monthly_qty'] < 50)].sort_values(by='qty_sold', ascending=True)
     bot_25_rev = df_grouped[(df_grouped['total_revenue'] <= bot_rev_cutoff) | (df_grouped['avg_monthly_qty'] < 50)].sort_values(by='total_revenue', ascending=True)
 
-    # KPI Summary Cards
+    # KPI Cards
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric("Total Volume Sold", f"{total_units_overall:,.0f} units")
     kpi2.metric("Total Revenue", f"${total_rev_overall:,.2f}")
@@ -183,8 +195,8 @@ if uploaded_files:
         st.dataframe(pivot_rev.style.format("${:,.2f}"), use_container_width=True)
 
     with tab3:
-        st.subheader("📄 Export Executive PDF Report")
-        st.write("Generate a formatted PDF report fitted dynamically for client presentations.")
+        st.subheader("📄 Export Consolidated Executive PDF Report")
+        st.write("Generate a formatted PDF report aggregating data from all uploaded spreadsheets.")
 
         if st.button("Generate Executive PDF"):
             buffer = io.BytesIO()
@@ -210,8 +222,8 @@ if uploaded_files:
             )
 
             # Header
-            story.append(Paragraph("Menu Performance Executive Summary", title_style))
-            story.append(Paragraph(f"Generated on {datetime.now().strftime('%B %d, %Y')} | Filter Mode: {time_view}", sub_style))
+            story.append(Paragraph("Consolidated Menu Performance Executive Summary", title_style))
+            story.append(Paragraph(f"Files Analyzed: {len(uploaded_files)} | Generated on {datetime.now().strftime('%B %d, %Y')} | Filter: {time_view}", sub_style))
 
             # Executive KPI Table
             kpi_data = [
@@ -233,7 +245,6 @@ if uploaded_files:
             story.append(kpi_table)
             story.append(Spacer(1, 8))
 
-            # Helper for Font Auto-Scaling
             def get_font_size(row_count):
                 if row_count > 30:
                     return 6, 4
@@ -242,7 +253,7 @@ if uploaded_files:
                 else:
                     return 8, 6
 
-            # TOP 25% TABLE SECTION
+            # TOP 25% SECTION
             top_row_count = len(top_25_freq)
             f_size, p_size = get_font_size(top_row_count)
 
@@ -281,7 +292,7 @@ if uploaded_files:
             story.append(KeepTogether(top_block))
             story.append(Spacer(1, 10))
 
-            # BOTTOM 25% TABLE SECTION
+            # BOTTOM 25% SECTION
             bot_row_count = len(bot_25_freq)
             f_size_b, p_size_b = get_font_size(bot_row_count)
 
@@ -319,7 +330,7 @@ if uploaded_files:
             st.download_button(
                 label="📥 Download Executive PDF Report",
                 data=pdf_bytes,
-                file_name=f"Menu_Executive_Report_{datetime.now().strftime('%Y_%m_%d')}.pdf",
+                file_name=f"Consolidated_Menu_Report_{datetime.now().strftime('%Y_%m_%d')}.pdf",
                 mime="application/pdf"
             )
 
