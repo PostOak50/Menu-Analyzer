@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-st.set_page_config(page_title="Dish Popularity & Volume Analyzer", layout="wide")
+st.set_page_config(page_title="Menu Popularity & Revenue Share Engine", layout="wide")
 
-st.title("Restaurant Dish Popularity & Ordering Frequency Engine")
-st.markdown("Upload POS CSV files to identify your top-ordered items, slow movers, and seasonal volume shifts.")
+st.title("Restaurant Menu Volume & Revenue Share Engine")
+st.markdown("Analyze dish popularity by **Monthly** and **Quarterly** breakdown, highlighting Top 25% and Bottom 25% performers by sales count and revenue contribution.")
 
 # Sidebar File Upload
 uploaded_files = st.sidebar.file_uploader(
@@ -18,130 +18,149 @@ if uploaded_files:
         df_temp = pd.read_csv(file)
         df_list.append(df_temp)
     
-    # Combine datasets
     raw_df = pd.concat(df_list, ignore_index=True)
     raw_df.columns = raw_df.columns.str.strip().str.lower()
     
-    # Check for required columns
-    required_cols = {'date', 'item_name', 'qty_sold'}
+    # Required columns for frequency + revenue calculations
+    required_cols = {'date', 'item_name', 'qty_sold', 'selling_price'}
     if not required_cols.issubset(set(raw_df.columns)):
         st.error(f"CSV files must contain the following columns: {required_cols}")
         st.stop()
 
-    # Process Dates and Seasons
+    # Process Dates, Months, Quarters
     raw_df['date'] = pd.to_datetime(raw_df['date'])
-    raw_df['month'] = raw_df['date'].dt.month_name()
-    
-    def get_season(month_num):
-        if month_num in [12, 1, 2]:
-            return 'Winter'
-        elif month_num in [3, 4, 5]:
-            return 'Spring'
-        elif month_num in [6, 7, 8]:
-            return 'Summer'
-        else:
-            return 'Fall'
+    raw_df['year'] = raw_df['date'].dt.year
+    raw_df['month'] = raw_df['date'].dt.strftime('%Y-%m (%B)')
+    raw_df['quarter'] = raw_df['date'].dt.to_period('Q').astype(str)
+    raw_df['total_revenue'] = raw_df['qty_sold'] * raw_df['selling_price']
 
-    raw_df['season'] = raw_df['date'].dt.month.apply(get_season)
+    # Sidebar Time Filters
+    st.sidebar.header("Time Filter Options")
+    time_view = st.sidebar.radio("View Breakdown By:", ["All Time", "By Quarter", "By Month"])
 
-    # Sidebar Filters
-    st.sidebar.header("Filter Options")
-    selected_season = st.sidebar.multiselect(
-        "Select Season(s)", 
-        options=['Spring', 'Summer', 'Fall', 'Winter'],
-        default=['Spring', 'Summer', 'Fall', 'Winter']
-    )
+    filtered_df = raw_df.copy()
 
-    # Filter Data
-    filtered_df = raw_df[raw_df['season'].isin(selected_season)]
+    if time_view == "By Quarter":
+        selected_quarters = st.sidebar.multiselect(
+            "Select Quarter(s)", 
+            options=sorted(raw_df['quarter'].unique()),
+            default=sorted(raw_df['quarter'].unique())
+        )
+        filtered_df = filtered_df[filtered_df['quarter'].isin(selected_quarters)]
+
+    elif time_view == "By Month":
+        selected_months = st.sidebar.multiselect(
+            "Select Month(s)", 
+            options=sorted(raw_df['month'].unique()),
+            default=sorted(raw_df['month'].unique())
+        )
+        filtered_df = filtered_df[filtered_df['month'].isin(selected_months)]
 
     if filtered_df.empty:
-        st.warning("No sales data available for the selected seasonal filters.")
+        st.warning("No sales data available for the selected time filter.")
         st.stop()
 
-    # Aggregate Total Quantity Sold per Item
+    # Aggregations
     df_grouped = filtered_df.groupby('item_name').agg({
-        'qty_sold': 'sum'
-    }).reset_index().sort_values(by='qty_sold', ascending=False)
+        'qty_sold': 'sum',
+        'total_revenue': 'sum'
+    }).reset_index()
 
-    # Core Metrics KPI Cards
-    total_items_sold = df_grouped['qty_sold'].sum()
-    unique_items = len(df_grouped)
-    avg_qty_per_item = df_grouped['qty_sold'].mean()
+    total_units_overall = df_grouped['qty_sold'].sum()
+    total_rev_overall = df_grouped['total_revenue'].sum()
 
+    # Percentage Share Calculations
+    df_grouped['pct_frequency'] = (df_grouped['qty_sold'] / total_units_overall) * 100
+    df_grouped['pct_revenue'] = (df_grouped['total_revenue'] / total_rev_overall) * 100
+
+    # KPI Summary Cards
     kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric("Total Units Sold", f"{total_items_sold:,.0f}")
-    kpi2.metric("Total Unique Menu Items", f"{unique_items}")
-    kpi3.metric("Avg Volume / Item", f"{avg_qty_per_item:.1f}")
+    kpi1.metric("Total Volume Sold", f"{total_units_overall:,.0f} units")
+    kpi2.metric("Total Revenue", f"${total_rev_overall:,.2f}")
+    kpi3.metric("Menu Item Count", f"{len(df_grouped)} items")
 
     st.markdown("---")
 
-    # Main Tabs
-    tab1, tab2 = st.tabs(["Overall Popularity Rankings", "Seasonal Frequency Breakdown"])
+    tab1, tab2 = st.tabs(["Top 25% vs Bottom 25% Split", "Time Trend Breakdowns (Monthly/Quarterly)"])
 
     with tab1:
-        st.subheader("Top Ordered Items Frequency Chart")
-        
-        # Interactive Horizontal Bar Chart
-        fig_popularity = px.bar(
-            df_grouped,
-            x="qty_sold",
-            y="item_name",
-            orientation="h",
-            labels={"qty_sold": "Total Units Ordered", "item_name": "Dish Name"},
-            title="Most Frequently Ordered Dishes",
-            color="qty_sold",
-            color_continuous_scale="Viridis"
-        )
-        # Order highest to lowest on chart
-        fig_popularity.update_layout(yaxis={'categoryorder': 'total ascending'}, height=max(400, len(df_grouped) * 25))
-        st.plotly_chart(fig_popularity, use_container_width=True)
+        st.subheader("Performance Quadrant: Frequency vs. Revenue Share")
 
-        # High/Low Breakdown
-        col_top, col_bottom = st.columns(2)
-        
-        with col_top:
-            st.success("🔥 **Top 20% Most Popular Items (Core Volume Drivers)**")
-            top_threshold = df_grouped['qty_sold'].quantile(0.80)
-            top_items = df_grouped[df_grouped['qty_sold'] >= top_threshold]
-            st.dataframe(top_items, use_container_width=True)
+        # Frequency Quartiles
+        top_freq_cutoff = df_grouped['qty_sold'].quantile(0.75)
+        bot_freq_cutoff = df_grouped['qty_sold'].quantile(0.25)
 
-        with col_bottom:
-            st.error("📉 **Bottom 20% Lowest Volume Items (Low Demand / Drop Candidates)**")
-            bottom_threshold = df_grouped['qty_sold'].quantile(0.20)
-            bottom_items = df_grouped[df_grouped['qty_sold'] <= bottom_threshold]
-            st.dataframe(bottom_items, use_container_width=True)
+        top_25_freq = df_grouped[df_grouped['qty_sold'] >= top_freq_cutoff].sort_values(by='qty_sold', ascending=False)
+        bot_25_freq = df_grouped[df_grouped['qty_sold'] <= bot_freq_cutoff].sort_values(by='qty_sold', ascending=True)
+
+        # Revenue Quartiles
+        top_rev_cutoff = df_grouped['total_revenue'].quantile(0.75)
+        bot_rev_cutoff = df_grouped['total_revenue'].quantile(0.25)
+
+        top_25_rev = df_grouped[df_grouped['total_revenue'] >= top_rev_cutoff].sort_values(by='total_revenue', ascending=False)
+        bot_25_rev = df_grouped[df_grouped['total_revenue'] <= bot_rev_cutoff].sort_values(by='total_revenue', ascending=True)
+
+        col_freq, col_rev = st.columns(2)
+
+        # FREQUENCY COLUMN
+        with col_freq:
+            st.markdown("### 📊 BY ORDER FREQUENCY (UNITS)")
+            
+            st.success("🔥 **Top 25% Most Popular Items (High Volume Drivers)**")
+            st.dataframe(
+                top_25_freq[['item_name', 'qty_sold', 'pct_frequency']]
+                .rename(columns={'item_name': 'Item', 'qty_sold': 'Units Sold', 'pct_frequency': '% of Total Volume'})
+                .style.format({'% of Total Volume': '{:.2f}%'}),
+                use_container_width=True
+            )
+
+            st.error("📉 **Bottom 25% Least Popular Items (Drop Candidates)**")
+            st.dataframe(
+                bot_25_freq[['item_name', 'qty_sold', 'pct_frequency']]
+                .rename(columns={'item_name': 'Item', 'qty_sold': 'Units Sold', 'pct_frequency': '% of Total Volume'})
+                .style.format({'% of Total Volume': '{:.2f}%'}),
+                use_container_width=True
+            )
+
+        # REVENUE COLUMN
+        with col_rev:
+            st.markdown("### 💰 BY REVENUE SHARE ($)")
+
+            st.success("💵 **Top 25% Highest Revenue Drivers**")
+            st.dataframe(
+                top_25_rev[['item_name', 'total_revenue', 'pct_revenue']]
+                .rename(columns={'item_name': 'Item', 'total_revenue': 'Total Revenue ($)', 'pct_revenue': '% of Total Revenue'})
+                .style.format({'Total Revenue ($)': '${:,.2f}', '% of Total Revenue': '{:.2f}%'}),
+                use_container_width=True
+            )
+
+            st.error("🛑 **Bottom 25% Lowest Revenue Contributors**")
+            st.dataframe(
+                bot_25_rev[['item_name', 'total_revenue', 'pct_revenue']]
+                .rename(columns={'item_name': 'Item', 'total_revenue': 'Total Revenue ($)', 'pct_revenue': '% of Total Revenue'})
+                .style.format({'Total Revenue ($)': '${:,.2f}', '% of Total Revenue': '{:.2f}%'}),
+                use_container_width=True
+            )
+
+        st.caption("Note: Middle 50% performers are hidden automatically.")
 
     with tab2:
-        st.subheader("Seasonal Ordering Patterns")
-        st.write("Tracks how dish order volume changes across different times of the year.")
+        st.subheader("Monthly & Quarterly Trend Analysis")
+        group_dim = 'quarter' if time_view == "By Quarter" else 'month' if time_view == "By Month" else 'quarter'
         
-        # Pivot Table by Season
-        seasonal_pivot = raw_df.pivot_table(
-            index='item_name', 
-            columns='season', 
-            values='qty_sold', 
-            aggfunc='sum', 
-            fill_value=0
+        # Pivot Table: Units Sold
+        st.markdown(f"#### Units Sold by Item per {group_dim.title()}")
+        pivot_units = raw_df.pivot_table(
+            index='item_name', columns=group_dim, values='qty_sold', aggfunc='sum', fill_value=0
         )
-        # Sort by total volume across all seasons
-        seasonal_pivot['Total'] = seasonal_pivot.sum(axis=1)
-        seasonal_pivot = seasonal_pivot.sort_values(by='Total', ascending=False).drop(columns=['Total'])
+        st.dataframe(pivot_units, use_container_width=True)
 
-        st.dataframe(seasonal_pivot, use_container_width=True)
-
-        # Grouped Bar Chart by Season
-        seasonal_grouped = raw_df.groupby(['item_name', 'season'])['qty_sold'].sum().reset_index()
-        fig_season = px.bar(
-            seasonal_grouped,
-            x='item_name',
-            y='qty_sold',
-            color='season',
-            barmode='group',
-            title="Order Frequency Comparison by Season",
-            labels={"qty_sold": "Units Sold", "item_name": "Dish Name"}
+        # Pivot Table: Revenue Share
+        st.markdown(f"#### Total Revenue ($) by Item per {group_dim.title()}")
+        pivot_rev = raw_df.pivot_table(
+            index='item_name', columns=group_dim, values='total_revenue', aggfunc='sum', fill_value=0
         )
-        st.plotly_chart(fig_season, use_container_width=True)
+        st.dataframe(pivot_rev.style.format("${:,.2f}"), use_container_width=True)
 
 else:
-    st.info("Upload one or more CSV files from the sidebar to generate the popularity analysis.")
+    st.info("Upload one or more CSV files from the sidebar to generate the analysis.")
