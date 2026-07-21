@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 from fpdf import FPDF
 from datetime import datetime
+import os
 
 st.set_page_config(page_title="Menu Popularity & Revenue Share Engine", layout="wide")
 
@@ -187,22 +188,21 @@ if uploaded_files:
         st.subheader("📄 Generate & Export Executive PDF Report")
         st.write("Click below to compile this menu analysis into a styled PDF report ready for email attachment.")
 
-        # FPDF PDF Generator Class
         class PDFReport(FPDF):
             def header(self):
                 self.set_font('Helvetica', 'B', 16)
                 self.set_text_color(26, 54, 93)
-                self.cell(0, 10, 'Menu Performance Executive Summary', ln=True, align='L')
+                self.cell(0, 10, 'Menu Performance Executive Summary', 0, 1, 'L')
                 self.set_font('Helvetica', '', 10)
                 self.set_text_color(113, 128, 150)
-                self.cell(0, 5, f'Generated on {datetime.now().strftime("%B %d, %Y")} | Filter: {time_view}', ln=True, align='L')
+                self.cell(0, 5, f'Generated on {datetime.now().strftime("%B %d, %Y")} | Filter: {time_view}', 0, 1, 'L')
                 self.ln(5)
 
             def footer(self):
                 self.set_y(-15)
                 self.set_font('Helvetica', 'I', 8)
                 self.set_text_color(128, 128, 128)
-                self.cell(0, 10, f'Page {self.page_no()}', align='C')
+                self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
         if st.button("Generate PDF Executive Report"):
             pdf = PDFReport()
@@ -214,41 +214,39 @@ if uploaded_files:
             pdf.set_fill_color(237, 242, 247)
             pdf.set_text_color(45, 55, 72)
             
-            pdf.cell(47, 8, "Total Units", border=1, fill=True, align='C')
-            pdf.cell(47, 8, "Total Revenue", border=1, fill=True, align='C')
-            pdf.cell(47, 8, "Valid Dishes", border=1, fill=True, align='C')
-            pdf.cell(47, 8, "Double Top (Top 25%)", border=1, fill=True, align='C')
-            pdf.ln()
+            pdf.cell(47, 8, "Total Units", 1, 0, 'C', fill=True)
+            pdf.cell(47, 8, "Total Revenue", 1, 0, 'C', fill=True)
+            pdf.cell(47, 8, "Valid Dishes", 1, 0, 'C', fill=True)
+            pdf.cell(47, 8, "Double Top (Top 25%)", 1, 1, 'C', fill=True)
 
             pdf.set_font('Helvetica', '', 10)
-            pdf.cell(47, 8, f"{total_units_overall:,.0f}", border=1, align='C')
-            pdf.cell(47, 8, f"${total_rev_overall:,.2f}", border=1, align='C')
-            pdf.cell(47, 8, f"{len(df_grouped)}", border=1, align='C')
-            pdf.cell(47, 8, f"{len(double_top_names)}", border=1, align='C')
-            pdf.ln(12)
+            pdf.cell(47, 8, f"{total_units_overall:,.0f}", 1, 0, 'C')
+            pdf.cell(47, 8, f"${total_rev_overall:,.2f}", 1, 0, 'C')
+            pdf.cell(47, 8, f"{len(df_grouped)}", 1, 0, 'C')
+            pdf.cell(47, 8, f"{len(double_top_names)}", 1, 1, 'C')
+            pdf.ln(8)
 
             # Legend Note
             pdf.set_fill_color(212, 237, 218)
             pdf.set_text_color(21, 87, 36)
             pdf.set_font('Helvetica', 'B', 9)
-            pdf.cell(0, 8, " Note: Green rows represent Double Performers (Top 25% Volume AND Revenue)", border=1, fill=True, ln=True)
+            pdf.cell(0, 8, " Note: Green rows represent Double Performers (Top 25% Volume AND Revenue)", 1, 1, fill=True)
             pdf.ln(5)
 
             # Section: Top 25%
             pdf.set_text_color(44, 82, 130)
             pdf.set_font('Helvetica', 'B', 12)
-            pdf.cell(0, 8, "Top 25% Performers", ln=True)
+            pdf.cell(0, 8, "Top 25% Performers", 0, 1)
             
             # Header
             pdf.set_font('Helvetica', 'B', 9)
             pdf.set_fill_color(226, 232, 240)
             pdf.set_text_color(0, 0, 0)
-            pdf.cell(65, 7, "Item Name", border=1, fill=True)
-            pdf.cell(30, 7, "Units Sold", border=1, fill=True, align='R')
-            pdf.cell(30, 7, "% Volume", border=1, fill=True, align='R')
-            pdf.cell(35, 7, "Revenue ($)", border=1, fill=True, align='R')
-            pdf.cell(28, 7, "% Revenue", border=1, fill=True, align='R')
-            pdf.ln()
+            pdf.cell(65, 7, "Item Name", 1, 0, fill=True)
+            pdf.cell(30, 7, "Units Sold", 1, 0, 'R', fill=True)
+            pdf.cell(30, 7, "% Volume", 1, 0, 'R', fill=True)
+            pdf.cell(35, 7, "Revenue ($)", 1, 0, 'R', fill=True)
+            pdf.cell(28, 7, "% Revenue", 1, 1, 'R', fill=True)
 
             pdf.set_font('Helvetica', '', 8)
             for _, r in top_25_freq.iterrows():
@@ -261,40 +259,46 @@ if uploaded_files:
                     pdf.set_text_color(0, 0, 0)
 
                 item_label = f"{r['item_name']} (Top Vol/Rev)" if is_dbl else r['item_name']
-                pdf.cell(65, 6, item_label[:32], border=1, fill=is_dbl)
-                pdf.cell(30, 6, f"{r['qty_sold']:,.0f}", border=1, align='R', fill=is_dbl)
-                pdf.cell(30, 6, f"{r['pct_frequency']:.2f}%", border=1, align='R', fill=is_dbl)
-                pdf.cell(35, 6, f"${r['total_revenue']:,.2f}", border=1, align='R', fill=is_dbl)
-                pdf.cell(28, 6, f"{r['pct_revenue']:.2f}%", border=1, align='R', fill=is_dbl)
-                pdf.ln()
+                # Clean text encoding for FPDF
+                clean_name = str(item_label).encode('latin-1', 'replace').decode('latin-1')[:32]
+                
+                pdf.cell(65, 6, clean_name, 1, 0, fill=is_dbl)
+                pdf.cell(30, 6, f"{r['qty_sold']:,.0f}", 1, 0, 'R', fill=is_dbl)
+                pdf.cell(30, 6, f"{r['pct_frequency']:.2f}%", 1, 0, 'R', fill=is_dbl)
+                pdf.cell(35, 6, f"${r['total_revenue']:,.2f}", 1, 0, 'R', fill=is_dbl)
+                pdf.cell(28, 6, f"{r['pct_revenue']:.2f}%", 1, 1, 'R', fill=is_dbl)
 
             pdf.ln(5)
 
             # Section: Bottom Performers
             pdf.set_text_color(155, 44, 44)
             pdf.set_font('Helvetica', 'B', 12)
-            pdf.cell(0, 8, "Bottom Performers (Bottom 25% or < 50 units/month)", ln=True)
+            pdf.cell(0, 8, "Bottom Performers (Bottom 25% or < 50 units/month)", 0, 1)
 
             pdf.set_font('Helvetica', 'B', 9)
             pdf.set_fill_color(226, 232, 240)
             pdf.set_text_color(0, 0, 0)
-            pdf.cell(65, 7, "Item Name", border=1, fill=True)
-            pdf.cell(30, 7, "Units Sold", border=1, fill=True, align='R')
-            pdf.cell(30, 7, "Mo. Avg", border=1, fill=True, align='R')
-            pdf.cell(35, 7, "Revenue ($)", border=1, fill=True, align='R')
-            pdf.cell(28, 7, "% Revenue", border=1, fill=True, align='R')
-            pdf.ln()
+            pdf.cell(65, 7, "Item Name", 1, 0, fill=True)
+            pdf.cell(30, 7, "Units Sold", 1, 0, 'R', fill=True)
+            pdf.cell(30, 7, "Mo. Avg", 1, 0, 'R', fill=True)
+            pdf.cell(35, 7, "Revenue ($)", 1, 0, 'R', fill=True)
+            pdf.cell(28, 7, "% Revenue", 1, 1, 'R', fill=True)
 
             pdf.set_font('Helvetica', '', 8)
             for _, r in bot_25_freq.iterrows():
-                pdf.cell(65, 6, r['item_name'][:32], border=1)
-                pdf.cell(30, 6, f"{r['qty_sold']:,.0f}", border=1, align='R')
-                pdf.cell(30, 6, f"{r['avg_monthly_qty']:.1f}", border=1, align='R')
-                pdf.cell(35, 6, f"${r['total_revenue']:,.2f}", border=1, align='R')
-                pdf.cell(28, 6, f"{r['pct_revenue']:.2f}%", border=1, align='R')
-                pdf.ln()
+                clean_name = str(r['item_name']).encode('latin-1', 'replace').decode('latin-1')[:32]
+                pdf.cell(65, 6, clean_name, 1, 0)
+                pdf.cell(30, 6, f"{r['qty_sold']:,.0f}", 1, 0, 'R')
+                pdf.cell(30, 6, f"{r['avg_monthly_qty']:.1f}", 1, 0, 'R')
+                pdf.cell(35, 6, f"${r['total_revenue']:,.2f}", 1, 0, 'R')
+                pdf.cell(28, 6, f"{r['pct_revenue']:.2f}%", 1, 1, 'R')
 
-            pdf_bytes = pdf.output(dest='S').encode('latin-1')
+            # Write file to local cloud buffer and read as bytes
+            pdf_filename = "temp_menu_report.pdf"
+            pdf.output(pdf_filename)
+            
+            with open(pdf_filename, "rb") as f:
+                pdf_bytes = f.read()
 
             st.download_button(
                 label="📥 Download PDF Executive Report",
