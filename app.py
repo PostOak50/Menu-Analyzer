@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import weasyprint
+from fpdf import FPDF
 from datetime import datetime
 
 st.set_page_config(page_title="Menu Popularity & Revenue Share Engine", layout="wide")
@@ -29,7 +29,7 @@ if uploaded_files:
         st.error(f"CSV files must contain the following columns: {required_cols}")
         st.stop()
 
-    # Data Cleaning: Ignore items without a valid price (null, zero, or missing)
+    # Data Cleaning: Ignore items without a valid price
     raw_df['selling_price'] = pd.to_numeric(raw_df['selling_price'], errors='coerce')
     raw_df = raw_df.dropna(subset=['selling_price'])
     raw_df = raw_df[raw_df['selling_price'] > 0]
@@ -67,7 +67,6 @@ if uploaded_files:
         st.warning("No sales data available for the selected time filter.")
         st.stop()
 
-    # Distinct month count for < 50 units/month check
     num_months = max(1, filtered_df['month'].nunique())
 
     # Aggregations
@@ -92,7 +91,7 @@ if uploaded_files:
     top_rev_cutoff = df_grouped['total_revenue'].quantile(0.75)
     bot_rev_cutoff = df_grouped['total_revenue'].quantile(0.25)
 
-    # Identify Double Performers (Top 25% Volume AND Top 25% Revenue)
+    # Double Performers
     top_25_freq_names = set(df_grouped[df_grouped['qty_sold'] >= top_freq_cutoff]['item_name'])
     top_25_rev_names = set(df_grouped[df_grouped['total_revenue'] >= top_rev_cutoff]['item_name'])
     double_top_names = top_25_freq_names.intersection(top_25_rev_names)
@@ -101,7 +100,6 @@ if uploaded_files:
     top_25_freq = df_grouped[df_grouped['qty_sold'] >= top_freq_cutoff].sort_values(by='qty_sold', ascending=False)
     top_25_rev = df_grouped[df_grouped['total_revenue'] >= top_rev_cutoff].sort_values(by='total_revenue', ascending=False)
 
-    # Bottom 25% OR < 50 units/month
     bot_25_freq = df_grouped[(df_grouped['qty_sold'] <= bot_freq_cutoff) | (df_grouped['avg_monthly_qty'] < 50)].sort_values(by='qty_sold', ascending=True)
     bot_25_rev = df_grouped[(df_grouped['total_revenue'] <= bot_rev_cutoff) | (df_grouped['avg_monthly_qty'] < 50)].sort_values(by='total_revenue', ascending=True)
 
@@ -127,7 +125,6 @@ if uploaded_files:
                 return ['background-color: #d4edda; font-weight: bold; color: #155724;'] * len(row)
             return [''] * len(row)
 
-        # FREQUENCY COLUMN
         with col_freq:
             st.markdown("### 📊 BY ORDER FREQUENCY (UNITS)")
             
@@ -149,7 +146,6 @@ if uploaded_files:
                 use_container_width=True
             )
 
-        # REVENUE COLUMN
         with col_rev:
             st.markdown("### 💰 BY REVENUE SHARE ($)")
 
@@ -171,8 +167,6 @@ if uploaded_files:
                 use_container_width=True
             )
 
-        st.caption("Note: Items without prices are ignored. Middle 50% performers are hidden automatically.")
-
     with tab2:
         st.subheader("Monthly & Quarterly Trend Analysis")
         group_dim = 'quarter' if time_view == "By Quarter" else 'month' if time_view == "By Month" else 'quarter'
@@ -191,118 +185,120 @@ if uploaded_files:
 
     with tab3:
         st.subheader("📄 Generate & Export Executive PDF Report")
-        st.write("Click below to compile this month's menu analysis into a styled PDF report ready for email attachment.")
+        st.write("Click below to compile this menu analysis into a styled PDF report ready for email attachment.")
+
+        # FPDF PDF Generator Class
+        class PDFReport(FPDF):
+            def header(self):
+                self.set_font('Helvetica', 'B', 16)
+                self.set_text_color(26, 54, 93)
+                self.cell(0, 10, 'Menu Performance Executive Summary', ln=True, align='L')
+                self.set_font('Helvetica', '', 10)
+                self.set_text_color(113, 128, 150)
+                self.cell(0, 5, f'Generated on {datetime.now().strftime("%B %d, %Y")} | Filter: {time_view}', ln=True, align='L')
+                self.ln(5)
+
+            def footer(self):
+                self.set_y(-15)
+                self.set_font('Helvetica', 'I', 8)
+                self.set_text_color(128, 128, 128)
+                self.cell(0, 10, f'Page {self.page_no()}', align='C')
 
         if st.button("Generate PDF Executive Report"):
-            now_str = datetime.now().strftime("%B %d, %Y")
+            pdf = PDFReport()
+            pdf.add_page()
+            pdf.set_auto_page_break(auto=True, margin=15)
+
+            # KPIs Summary Table
+            pdf.set_font('Helvetica', 'B', 10)
+            pdf.set_fill_color(237, 242, 247)
+            pdf.set_text_color(45, 55, 72)
             
-            top_freq_rows = ""
+            pdf.cell(47, 8, "Total Units", border=1, fill=True, align='C')
+            pdf.cell(47, 8, "Total Revenue", border=1, fill=True, align='C')
+            pdf.cell(47, 8, "Valid Dishes", border=1, fill=True, align='C')
+            pdf.cell(47, 8, "Double Top (Top 25%)", border=1, fill=True, align='C')
+            pdf.ln()
+
+            pdf.set_font('Helvetica', '', 10)
+            pdf.cell(47, 8, f"{total_units_overall:,.0f}", border=1, align='C')
+            pdf.cell(47, 8, f"${total_rev_overall:,.2f}", border=1, align='C')
+            pdf.cell(47, 8, f"{len(df_grouped)}", border=1, align='C')
+            pdf.cell(47, 8, f"{len(double_top_names)}", border=1, align='C')
+            pdf.ln(12)
+
+            # Legend Note
+            pdf.set_fill_color(212, 237, 218)
+            pdf.set_text_color(21, 87, 36)
+            pdf.set_font('Helvetica', 'B', 9)
+            pdf.cell(0, 8, " Note: Green rows represent Double Performers (Top 25% Volume AND Revenue)", border=1, fill=True, ln=True)
+            pdf.ln(5)
+
+            # Section: Top 25%
+            pdf.set_text_color(44, 82, 130)
+            pdf.set_font('Helvetica', 'B', 12)
+            pdf.cell(0, 8, "Top 25% Performers", ln=True)
+            
+            # Header
+            pdf.set_font('Helvetica', 'B', 9)
+            pdf.set_fill_color(226, 232, 240)
+            pdf.set_text_color(0, 0, 0)
+            pdf.cell(65, 7, "Item Name", border=1, fill=True)
+            pdf.cell(30, 7, "Units Sold", border=1, fill=True, align='R')
+            pdf.cell(30, 7, "% Volume", border=1, fill=True, align='R')
+            pdf.cell(35, 7, "Revenue ($)", border=1, fill=True, align='R')
+            pdf.cell(28, 7, "% Revenue", border=1, fill=True, align='R')
+            pdf.ln()
+
+            pdf.set_font('Helvetica', '', 8)
             for _, r in top_25_freq.iterrows():
                 is_dbl = r['item_name'] in double_top_names
-                bg = "background-color: #d4edda; font-weight: bold; color: #155724;" if is_dbl else ""
-                badge = " 🟢 (Top Vol & Rev)" if is_dbl else ""
-                top_freq_rows += f"<tr style='{bg}'><td>{r['item_name']}{badge}</td><td>{r['qty_sold']:,.0f}</td><td>{r['pct_frequency']:.2f}%</td></tr>"
+                if is_dbl:
+                    pdf.set_fill_color(212, 237, 218)
+                    pdf.set_text_color(21, 87, 36)
+                else:
+                    pdf.set_fill_color(255, 255, 255)
+                    pdf.set_text_color(0, 0, 0)
 
-            top_rev_rows = ""
-            for _, r in top_25_rev.iterrows():
-                is_dbl = r['item_name'] in double_top_names
-                bg = "background-color: #d4edda; font-weight: bold; color: #155724;" if is_dbl else ""
-                badge = " 🟢 (Top Vol & Rev)" if is_dbl else ""
-                top_rev_rows += f"<tr style='{bg}'><td>{r['item_name']}{badge}</td><td>${r['total_revenue']:,.2f}</td><td>{r['pct_revenue']:.2f}%</td></tr>"
+                item_label = f"{r['item_name']} (Top Vol/Rev)" if is_dbl else r['item_name']
+                pdf.cell(65, 6, item_label[:32], border=1, fill=is_dbl)
+                pdf.cell(30, 6, f"{r['qty_sold']:,.0f}", border=1, align='R', fill=is_dbl)
+                pdf.cell(30, 6, f"{r['pct_frequency']:.2f}%", border=1, align='R', fill=is_dbl)
+                pdf.cell(35, 6, f"${r['total_revenue']:,.2f}", border=1, align='R', fill=is_dbl)
+                pdf.cell(28, 6, f"{r['pct_revenue']:.2f}%", border=1, align='R', fill=is_dbl)
+                pdf.ln()
 
-            bot_freq_rows = ""
+            pdf.ln(5)
+
+            # Section: Bottom Performers
+            pdf.set_text_color(155, 44, 44)
+            pdf.set_font('Helvetica', 'B', 12)
+            pdf.cell(0, 8, "Bottom Performers (Bottom 25% or < 50 units/month)", ln=True)
+
+            pdf.set_font('Helvetica', 'B', 9)
+            pdf.set_fill_color(226, 232, 240)
+            pdf.set_text_color(0, 0, 0)
+            pdf.cell(65, 7, "Item Name", border=1, fill=True)
+            pdf.cell(30, 7, "Units Sold", border=1, fill=True, align='R')
+            pdf.cell(30, 7, "Mo. Avg", border=1, fill=True, align='R')
+            pdf.cell(35, 7, "Revenue ($)", border=1, fill=True, align='R')
+            pdf.cell(28, 7, "% Revenue", border=1, fill=True, align='R')
+            pdf.ln()
+
+            pdf.set_font('Helvetica', '', 8)
             for _, r in bot_25_freq.iterrows():
-                bot_freq_rows += f"<tr><td>{r['item_name']}</td><td>{r['qty_sold']:,.0f}</td><td>{r['avg_monthly_qty']:.1f}</td><td>{r['pct_frequency']:.2f}%</td></tr>"
+                pdf.cell(65, 6, r['item_name'][:32], border=1)
+                pdf.cell(30, 6, f"{r['qty_sold']:,.0f}", border=1, align='R')
+                pdf.cell(30, 6, f"{r['avg_monthly_qty']:.1f}", border=1, align='R')
+                pdf.cell(35, 6, f"${r['total_revenue']:,.2f}", border=1, align='R')
+                pdf.cell(28, 6, f"{r['pct_revenue']:.2f}%", border=1, align='R')
+                pdf.ln()
 
-            bot_rev_rows = ""
-            for _, r in bot_25_rev.iterrows():
-                bot_rev_rows += f"<tr><td>{r['item_name']}</td><td>${r['total_revenue']:,.2f}</td><td>{r['avg_monthly_qty']:.1f}</td><td>{r['pct_revenue']:.2f}%</td></tr>"
-
-            html_doc = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-            <style>
-                @page {{ size: A4; margin: 15mm 12mm; }}
-                body {{ font-family: 'Helvetica', 'Arial', sans-serif; color: #333; margin: 0; padding: 0; font-size: 10pt; }}
-                h1 {{ color: #1a365d; margin-bottom: 5px; font-size: 18pt; }}
-                .subtitle {{ color: #718096; font-size: 10pt; margin-bottom: 20px; }}
-                .kpi-container {{ display: table; width: 100%; margin-bottom: 20px; background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 5px; }}
-                .kpi-box {{ display: table-cell; text-align: center; padding: 12px; width: 25%; }}
-                .kpi-val {{ font-size: 14pt; font-weight: bold; color: #2b6cb0; }}
-                .kpi-lbl {{ font-size: 8pt; color: #4a5568; text-transform: uppercase; }}
-                h2 {{ color: #2c5282; font-size: 13pt; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px; margin-top: 15px; page-break-after: avoid; }}
-                table {{ width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 9pt; }}
-                th {{ background-color: #edf2f7; color: #2d3748; text-align: left; padding: 6px; border: 1px solid #cbd5e0; font-size: 8pt; }}
-                td {{ padding: 6px; border: 1px solid #e2e8f0; }}
-                .section-grid {{ display: table; width: 100%; }}
-                .section-col {{ display: table-cell; width: 48%; vertical-align: top; padding-right: 2%; }}
-                .section-col:last-child {{ padding-right: 0; padding-left: 2%; }}
-                .legend-box {{ background-color: #d4edda; color: #155724; padding: 8px 12px; border-radius: 4px; font-size: 9pt; margin-bottom: 15px; border: 1px solid #c3e6cb; }}
-            </style>
-            </head>
-            <body>
-                <h1>Menu Performance Executive Report</h1>
-                <div class="subtitle">Generated on {now_str} | Filter Mode: {time_view}</div>
-
-                <div class="kpi-container">
-                    <div class="kpi-box"><div class="kpi-val">{total_units_overall:,.0f}</div><div class="kpi-lbl">Total Units</div></div>
-                    <div class="kpi-box"><div class="kpi-val">${total_rev_overall:,.2f}</div><div class="kpi-lbl">Total Revenue</div></div>
-                    <div class="kpi-box"><div class="kpi-val">{len(df_grouped)}</div><div class="kpi-lbl">Valid Dishes</div></div>
-                    <div class="kpi-box"><div class="kpi-val">{len(double_top_names)}</div><div class="kpi-lbl">Double Top 🟢</div></div>
-                </div>
-
-                <div class="legend-box">
-                    <strong>🟢 Green Highlight:</strong> Items qualifying as BOTH Top 25% by Order Volume AND Top 25% by Revenue Contribution.
-                </div>
-
-                <h2>Top 25% Performers</h2>
-                <div class="section-grid">
-                    <div class="section-col">
-                        <h3>By Volume (Order Frequency)</h3>
-                        <table>
-                            <thead><tr><th>Item Name</th><th>Units</th><th>% Share</th></tr></thead>
-                            <tbody>{top_freq_rows}</tbody>
-                        </table>
-                    </div>
-                    <div class="section-col">
-                        <h3>By Revenue Share</h3>
-                        <table>
-                            <thead><tr><th>Item Name</th><th>Revenue ($)</th><th>% Share</th></tr></thead>
-                            <tbody>{top_rev_rows}</tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <h2>Bottom Performers (Bottom 25% or < 50 units/month)</h2>
-                <div class="section-grid">
-                    <div class="section-col">
-                        <h3>Lowest Volume Items</h3>
-                        <table>
-                            <thead><tr><th>Item Name</th><th>Units</th><th>Mo. Avg</th><th>% Share</th></tr></thead>
-                            <tbody>{bot_freq_rows}</tbody>
-                        </table>
-                    </div>
-                    <div class="section-col">
-                        <h3>Lowest Revenue Contributors</h3>
-                        <table>
-                            <thead><tr><th>Item Name</th><th>Revenue ($)</th><th>Mo. Avg</th><th>% Share</th></tr></thead>
-                            <tbody>{bot_rev_rows}</tbody>
-                        </table>
-                    </div>
-                </div>
-            </body>
-            </html>
-            """
-
-            weasyprint.HTML(string=html_doc).write_pdf("menu_executive_report.pdf")
-            
-            with open("menu_executive_report.pdf", "rb") as pdf_file:
-                PDFbyte = pdf_file.read()
+            pdf_bytes = pdf.output(dest='S').encode('latin-1')
 
             st.download_button(
                 label="📥 Download PDF Executive Report",
-                data=PDFbyte,
+                data=pdf_bytes,
                 file_name=f"Menu_Report_{datetime.now().strftime('%Y_%m_%d')}.pdf",
                 mime="application/pdf"
             )
