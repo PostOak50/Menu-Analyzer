@@ -12,7 +12,7 @@ from reportlab.lib import colors
 st.set_page_config(page_title="Menu Volume & Revenue Engine", layout="wide")
 
 st.title("Restaurant Menu Volume & Revenue Share Engine")
-st.markdown("Upload multiple POS CSV files to consolidate dish popularity across months, quarters, or locations.")
+st.markdown("Upload POS CSV files to consolidate dish popularity across months, quarters, menu groups, or locations.")
 
 # Sidebar Multi-File Upload Handler
 uploaded_files = st.sidebar.file_uploader(
@@ -22,15 +22,12 @@ uploaded_files = st.sidebar.file_uploader(
 if uploaded_files:
     df_list = []
     
-    # Process each uploaded spreadsheet
     for file in uploaded_files:
         try:
             df_temp = pd.read_csv(file)
-            # Standardize column headers (remove spaces, convert to lowercase)
             df_temp.columns = df_temp.columns.str.strip().str.lower()
             
-            # Verify required columns exist in every spreadsheet
-            required_cols = {'date', 'item_name', 'qty_sold', 'selling_price'}
+            required_cols = {'date', 'menu_group', 'item_name', 'qty_sold', 'selling_price'}
             if required_cols.issubset(set(df_temp.columns)):
                 df_list.append(df_temp)
             else:
@@ -39,27 +36,25 @@ if uploaded_files:
             st.sidebar.error(f"Error reading {file.name}: {e}")
 
     if not df_list:
-        st.error("No valid CSV files were loaded. Please check your column headers.")
+        st.error("No valid CSV files loaded. Ensure headers include: date, menu_group, item_name, qty_sold, selling_price")
         st.stop()
 
-    # Consolidate all spreadsheets into a single unified DataFrame
     raw_df = pd.concat(df_list, ignore_index=True)
     st.sidebar.success(f"Successfully merged {len(df_list)} spreadsheet(s)!")
 
-    # Data Cleaning: Ignore items without a valid price
+    # Data Cleaning
     raw_df['selling_price'] = pd.to_numeric(raw_df['selling_price'], errors='coerce')
     raw_df = raw_df.dropna(subset=['selling_price'])
     raw_df = raw_df[raw_df['selling_price'] > 0]
 
-    # Process Dates, Months, Quarters
     raw_df['date'] = pd.to_datetime(raw_df['date'])
     raw_df['year'] = raw_df['date'].dt.year
     raw_df['month'] = raw_df['date'].dt.strftime('%Y-%m (%B)')
     raw_df['quarter'] = raw_df['date'].dt.to_period('Q').astype(str)
     raw_df['total_revenue'] = raw_df['qty_sold'] * raw_df['selling_price']
 
-    # Sidebar Time Filters
-    st.sidebar.header("Time Filter Options")
+    # Sidebar Filters
+    st.sidebar.header("Filter Controls")
     time_view = st.sidebar.radio("View Breakdown By:", ["All Time", "By Quarter", "By Month"])
 
     filtered_df = raw_df.copy()
@@ -80,58 +75,106 @@ if uploaded_files:
         )
         filtered_df = filtered_df[filtered_df['month'].isin(selected_months)]
 
+    available_groups = sorted(filtered_df['menu_group'].dropna().unique())
+    selected_groups = st.sidebar.multiselect("Filter Menu Group(s)", options=available_groups, default=available_groups)
+    filtered_df = filtered_df[filtered_df['menu_group'].isin(selected_groups)]
+
     if filtered_df.empty:
-        st.warning("No sales data available for the selected time filter.")
+        st.warning("No sales data available for the selected filters.")
         st.stop()
 
     num_months = max(1, filtered_df['month'].nunique())
 
-    # Consolidated Aggregations (Sums total quantities and revenues across all files)
-    df_grouped = filtered_df.groupby('item_name').agg({
+    # Item Aggregations
+    df_grouped = filtered_df.groupby(['menu_group', 'item_name']).agg({
         'qty_sold': 'sum',
         'total_revenue': 'sum',
         'selling_price': 'mean'
     }).reset_index()
 
     df_grouped['avg_monthly_qty'] = df_grouped['qty_sold'] / num_months
-
     total_units_overall = df_grouped['qty_sold'].sum()
     total_rev_overall = df_grouped['total_revenue'].sum()
 
-    # Percentage Share Calculations
     df_grouped['pct_frequency'] = (df_grouped['qty_sold'] / total_units_overall) * 100
     df_grouped['pct_revenue'] = (df_grouped['total_revenue'] / total_rev_overall) * 100
 
-    # Quartile Thresholds
+    # DEDICATED MENU GROUP SUMMARY (Sorted Highest to Lowest Frequency)
+    menu_group_summary = filtered_df.groupby('menu_group').agg({
+        'qty_sold': 'sum',
+        'total_revenue': 'sum'
+    }).reset_index()
+
+    menu_group_summary['pct_frequency'] = (menu_group_summary['qty_sold'] / total_units_overall) * 100
+    menu_group_summary['pct_revenue'] = (menu_group_summary['total_revenue'] / total_rev_overall) * 100
+    menu_group_summary = menu_group_summary.sort_values(by='qty_sold', ascending=False)
+
+    # Cutoffs & Quadrants
     top_freq_cutoff = df_grouped['qty_sold'].quantile(0.75)
     bot_freq_cutoff = df_grouped['qty_sold'].quantile(0.25)
     top_rev_cutoff = df_grouped['total_revenue'].quantile(0.75)
-    bot_rev_cutoff = df_grouped['total_revenue'].quantile(0.25)
 
-    # Double Performers (Top 25% Volume AND Top 25% Revenue)
     top_25_freq_names = set(df_grouped[df_grouped['qty_sold'] >= top_freq_cutoff]['item_name'])
     top_25_rev_names = set(df_grouped[df_grouped['total_revenue'] >= top_rev_cutoff]['item_name'])
     double_top_names = top_25_freq_names.intersection(top_25_rev_names)
 
-    # Subsets
     top_25_freq = df_grouped[df_grouped['qty_sold'] >= top_freq_cutoff].sort_values(by='qty_sold', ascending=False)
     top_25_rev = df_grouped[df_grouped['total_revenue'] >= top_rev_cutoff].sort_values(by='total_revenue', ascending=False)
-
     bot_25_freq = df_grouped[(df_grouped['qty_sold'] <= bot_freq_cutoff) | (df_grouped['avg_monthly_qty'] < 50)].sort_values(by='qty_sold', ascending=True)
-    bot_25_rev = df_grouped[(df_grouped['total_revenue'] <= bot_rev_cutoff) | (df_grouped['avg_monthly_qty'] < 50)].sort_values(by='total_revenue', ascending=True)
 
-    # KPI Cards
+    # KPI Bar
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric("Total Volume Sold", f"{total_units_overall:,.0f} units")
     kpi2.metric("Total Revenue", f"${total_rev_overall:,.2f}")
-    kpi3.metric("Valid Menu Items", f"{len(df_grouped)} items")
+    kpi3.metric("Valid Dishes", f"{len(df_grouped)} items")
     kpi4.metric("Double Top Performers 🟢", f"{len(double_top_names)} items")
 
     st.markdown("---")
 
-    tab1, tab2, tab3 = st.tabs(["Top 25% vs Bottom 25% Split", "Time Trend Breakdowns", "Export PDF Report"])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Menu Group Summary", 
+        "Top 25% vs Bottom 25% Split", 
+        "Time Trend Breakdowns", 
+        "Export PDF Report"
+    ])
 
+    # TAB 1: MENU GROUP SUMMARY TABLE (HIGHEST TO LOWEST FREQUENCY)
     with tab1:
+        st.subheader("📊 Menu Group Volume & Revenue Ranking")
+        st.write("Overview of performance aggregated by menu section, sorted from **highest to lowest order frequency**.")
+
+        disp_group = menu_group_summary.rename(columns={
+            'menu_group': 'Menu Group Category',
+            'qty_sold': 'Total Units Sold',
+            'pct_frequency': '% Volume Share',
+            'total_revenue': 'Total Revenue ($)',
+            'pct_revenue': '% Revenue Share'
+        })
+
+        st.dataframe(
+            disp_group.style.format({
+                'Total Units Sold': '{:,.0f}',
+                '% Volume Share': '{:.2f}%',
+                'Total Revenue ($)': '${:,.2f}',
+                '% Revenue Share': '{:.2f}%'
+            }),
+            use_container_width=True
+        )
+
+        fig_group = px.bar(
+            menu_group_summary,
+            x='qty_sold',
+            y='menu_group',
+            orientation='h',
+            title="Order Volume by Menu Group Category",
+            labels={'qty_sold': 'Units Sold', 'menu_group': 'Menu Category'},
+            color='qty_sold',
+            color_continuous_scale='Blues'
+        )
+        fig_group.update_layout(yaxis={'categoryorder': 'total ascending'})
+        st.plotly_chart(fig_group, use_container_width=True)
+
+    with tab2:
         st.subheader("Performance Quadrant: Frequency vs. Revenue Share")
         st.info("🟢 **Highlight Note:** Items highlighted in green are **Double Performers** (belonging to BOTH Top 25% Volume AND Top 25% Revenue).")
 
@@ -145,8 +188,8 @@ if uploaded_files:
         with col_freq:
             st.markdown("### 📊 BY ORDER FREQUENCY (UNITS)")
             st.success("🔥 **Top 25% Most Popular Items**")
-            top_freq_disp = top_25_freq[['item_name', 'qty_sold', 'pct_frequency']].rename(
-                columns={'item_name': 'Item', 'qty_sold': 'Units Sold', 'pct_frequency': '% Volume'}
+            top_freq_disp = top_25_freq[['menu_group', 'item_name', 'qty_sold', 'pct_frequency']].rename(
+                columns={'menu_group': 'Group', 'item_name': 'Item', 'qty_sold': 'Units Sold', 'pct_frequency': '% Volume'}
             )
             st.dataframe(
                 top_freq_disp.style.apply(highlight_double_top, axis=1).format({'% Volume': '{:.2f}%'}),
@@ -154,8 +197,8 @@ if uploaded_files:
             )
 
             st.error("📉 **Bottom 25% / Low Volume (< 50/mo)**")
-            bot_freq_disp = bot_25_freq[['item_name', 'qty_sold', 'avg_monthly_qty', 'pct_frequency']].rename(
-                columns={'item_name': 'Item', 'qty_sold': 'Units Sold', 'avg_monthly_qty': 'Monthly Avg', 'pct_frequency': '% Volume'}
+            bot_freq_disp = bot_25_freq[['menu_group', 'item_name', 'qty_sold', 'avg_monthly_qty', 'pct_frequency']].rename(
+                columns={'menu_group': 'Group', 'item_name': 'Item', 'qty_sold': 'Units Sold', 'avg_monthly_qty': 'Monthly Avg', 'pct_frequency': '% Volume'}
             )
             st.dataframe(
                 bot_freq_disp.style.format({'Monthly Avg': '{:.1f}', '% Volume': '{:.2f}%'}),
@@ -165,8 +208,8 @@ if uploaded_files:
         with col_rev:
             st.markdown("### 💰 BY REVENUE SHARE ($)")
             st.success("💵 **Top 25% Highest Revenue Drivers**")
-            top_rev_disp = top_25_rev[['item_name', 'total_revenue', 'pct_revenue']].rename(
-                columns={'item_name': 'Item', 'total_revenue': 'Total Revenue ($)', 'pct_revenue': '% Revenue'}
+            top_rev_disp = top_25_rev[['menu_group', 'item_name', 'total_revenue', 'pct_revenue']].rename(
+                columns={'menu_group': 'Group', 'item_name': 'Item', 'total_revenue': 'Total Revenue ($)', 'pct_revenue': '% Revenue'}
             )
             st.dataframe(
                 top_rev_disp.style.apply(highlight_double_top, axis=1).format({'Total Revenue ($)': '${:,.2f}', '% Revenue': '{:.2f}%'}),
@@ -174,29 +217,29 @@ if uploaded_files:
             )
 
             st.error("🛑 **Bottom 25% / Low Volume (< 50/mo)**")
-            bot_rev_disp = bot_25_rev[['item_name', 'total_revenue', 'avg_monthly_qty', 'pct_revenue']].rename(
-                columns={'item_name': 'Item', 'total_revenue': 'Total Revenue ($)', 'avg_monthly_qty': 'Monthly Avg', 'pct_revenue': '% Revenue'}
+            bot_rev_disp = bot_25_freq[['menu_group', 'item_name', 'total_revenue', 'avg_monthly_qty', 'pct_revenue']].rename(
+                columns={'menu_group': 'Group', 'item_name': 'Item', 'total_revenue': 'Total Revenue ($)', 'avg_monthly_qty': 'Monthly Avg', 'pct_revenue': '% Revenue'}
             )
             st.dataframe(
                 bot_rev_disp.style.format({'Total Revenue ($)': '${:,.2f}', 'Monthly Avg': '{:.1f}', '% Revenue': '{:.2f}%'}),
                 use_container_width=True
             )
 
-    with tab2:
+    with tab3:
         st.subheader("Monthly & Quarterly Trend Analysis")
         group_dim = 'quarter' if time_view == "By Quarter" else 'month' if time_view == "By Month" else 'quarter'
         
         st.markdown(f"#### Units Sold by Item per {group_dim.title()}")
-        pivot_units = raw_df.pivot_table(index='item_name', columns=group_dim, values='qty_sold', aggfunc='sum', fill_value=0)
+        pivot_units = raw_df.pivot_table(index=['menu_group', 'item_name'], columns=group_dim, values='qty_sold', aggfunc='sum', fill_value=0)
         st.dataframe(pivot_units, use_container_width=True)
 
         st.markdown(f"#### Total Revenue ($) by Item per {group_dim.title()}")
-        pivot_rev = raw_df.pivot_table(index='item_name', columns=group_dim, values='total_revenue', aggfunc='sum', fill_value=0)
+        pivot_rev = raw_df.pivot_table(index=['menu_group', 'item_name'], columns=group_dim, values='total_revenue', aggfunc='sum', fill_value=0)
         st.dataframe(pivot_rev.style.format("${:,.2f}"), use_container_width=True)
 
-    with tab3:
-        st.subheader("📄 Export Consolidated Executive PDF Report")
-        st.write("Generate a formatted PDF report aggregating data from all uploaded spreadsheets.")
+    with tab4:
+        st.subheader("📄 Export Executive PDF Report")
+        st.write("Generate a formatted PDF report with Menu Group summaries and item rankings.")
 
         if st.button("Generate Executive PDF"):
             buffer = io.BytesIO()
@@ -211,15 +254,9 @@ if uploaded_files:
             story = []
 
             styles = getSampleStyleSheet()
-            title_style = ParagraphStyle(
-                'ReportTitle', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor("#1A365D"), spaceAfter=2
-            )
-            sub_style = ParagraphStyle(
-                'ReportSub', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor("#718096"), spaceAfter=10
-            )
-            h2_style = ParagraphStyle(
-                'H2Style', parent=styles['Heading2'], fontSize=11, textColor=colors.HexColor("#2C5282"), spaceBefore=6, spaceAfter=4
-            )
+            title_style = ParagraphStyle('ReportTitle', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor("#1A365D"), spaceAfter=2)
+            sub_style = ParagraphStyle('ReportSub', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor("#718096"), spaceAfter=10)
+            h2_style = ParagraphStyle('H2Style', parent=styles['Heading2'], fontSize=11, textColor=colors.HexColor("#2C5282"), spaceBefore=6, spaceAfter=4)
 
             # Header
             story.append(Paragraph("Consolidated Menu Performance Executive Summary", title_style))
@@ -245,44 +282,63 @@ if uploaded_files:
             story.append(kpi_table)
             story.append(Spacer(1, 8))
 
-            def get_font_size(row_count):
-                if row_count > 30:
-                    return 6, 4
-                elif row_count > 20:
-                    return 7, 5
-                else:
-                    return 8, 6
-
-            # TOP 25% SECTION
-            top_row_count = len(top_25_freq)
-            f_size, p_size = get_font_size(top_row_count)
-
-            top_table_data = [["Item Name", "Units Sold", "% Volume", "Revenue ($)", "% Revenue Share"]]
-            top_styles = [
-                ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2C5282")),
-                ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,-1), f_size),
-                ('PADDING', (0,0), (-1,-1), p_size),
-                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
-                ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
-            ]
-
-            for idx, (_, r) in enumerate(top_25_freq.iterrows(), start=1):
-                is_dbl = r['item_name'] in double_top_names
-                label = f"{r['item_name']} (Top Vol & Rev)" if is_dbl else r['item_name']
-                top_table_data.append([
-                    label[:32],
+            # MENU GROUP TABLE IN PDF (HIGHEST TO LOWEST FREQUENCY)
+            group_pdf_data = [["Menu Group Category", "Units Sold", "% Volume Share", "Revenue ($)", "% Revenue Share"]]
+            for _, r in menu_group_summary.iterrows():
+                group_pdf_data.append([
+                    str(r['menu_group'])[:25],
                     f"{r['qty_sold']:,.0f}",
                     f"{r['pct_frequency']:.2f}%",
                     f"${r['total_revenue']:,.2f}",
                     f"{r['pct_revenue']:.2f}%"
                 ])
+            
+            group_table = Table(group_pdf_data, colWidths=[180, 90, 90, 90, 90])
+            group_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#1A365D")),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,-1), 8),
+                ('PADDING', (0,0), (-1,-1), 4),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E0")),
+                ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
+            ]))
+            
+            group_block = [
+                Paragraph("Menu Group Summary (Ranked Highest to Lowest Frequency)", h2_style),
+                group_table
+            ]
+            story.append(KeepTogether(group_block))
+            story.append(Spacer(1, 10))
+
+            # TOP 25% SECTION
+            top_table_data = [["Group", "Item Name", "Units", "% Vol", "Revenue ($)", "% Rev"]]
+            top_styles = [
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2C5282")),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,-1), 7),
+                ('PADDING', (0,0), (-1,-1), 4),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
+                ('ALIGN', (2,0), (-1,-1), 'RIGHT'),
+            ]
+
+            for idx, (_, r) in enumerate(top_25_freq.iterrows(), start=1):
+                is_dbl = r['item_name'] in double_top_names
+                label = f"{r['item_name']} (Top Vol/Rev)" if is_dbl else r['item_name']
+                top_table_data.append([
+                    str(r['menu_group'])[:15],
+                    label[:25],
+                    f"{r['qty_sold']:,.0f}",
+                    f"{r['pct_frequency']:.1f}%",
+                    f"${r['total_revenue']:,.2f}",
+                    f"{r['pct_revenue']:.1f}%"
+                ])
                 if is_dbl:
                     top_styles.append(('BACKGROUND', (0, idx), (-1, idx), colors.HexColor("#D4EDDA")))
                     top_styles.append(('TEXTCOLOR', (0, idx), (-1, idx), colors.HexColor("#155724")))
 
-            top_table = Table(top_table_data, colWidths=[200, 85, 85, 85, 85])
+            top_table = Table(top_table_data, colWidths=[110, 150, 70, 70, 70, 70])
             top_table.setStyle(TableStyle(top_styles))
             
             top_block = [
@@ -293,27 +349,25 @@ if uploaded_files:
             story.append(Spacer(1, 10))
 
             # BOTTOM 25% SECTION
-            bot_row_count = len(bot_25_freq)
-            f_size_b, p_size_b = get_font_size(bot_row_count)
-
-            bot_table_data = [["Item Name", "Units Sold", "Monthly Avg", "Revenue ($)", "% Revenue Share"]]
+            bot_table_data = [["Group", "Item Name", "Units", "Mo. Avg", "Revenue ($)", "% Rev"]]
             bot_table_data.extend([
-                r['item_name'][:32],
+                str(r['menu_group'])[:15],
+                r['item_name'][:25],
                 f"{r['qty_sold']:,.0f}",
                 f"{r['avg_monthly_qty']:.1f}",
                 f"${r['total_revenue']:,.2f}",
-                f"{r['pct_revenue']:.2f}%"
+                f"{r['pct_revenue']:.1f}%"
             ] for _, r in bot_25_freq.iterrows())
 
-            bot_table = Table(bot_table_data, colWidths=[200, 85, 85, 85, 85])
+            bot_table = Table(bot_table_data, colWidths=[110, 150, 70, 70, 70, 70])
             bot_table.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#9B2C2C")),
                 ('TEXTCOLOR', (0,0), (-1,0), colors.white),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,-1), f_size_b),
-                ('PADDING', (0,0), (-1,-1), p_size_b),
+                ('FONTSIZE', (0,0), (-1,-1), 7),
+                ('PADDING', (0,0), (-1,-1), 4),
                 ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
-                ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
+                ('ALIGN', (2,0), (-1,-1), 'RIGHT'),
             ]))
 
             bot_block = [
@@ -322,7 +376,6 @@ if uploaded_files:
             ]
             story.append(KeepTogether(bot_block))
 
-            # Build Document
             doc.build(story)
             pdf_bytes = buffer.getvalue()
             buffer.close()
